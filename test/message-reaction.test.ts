@@ -11,6 +11,9 @@ describe("message reactions", () => {
     expect(normalizeMessageReaction("Выбираю 🤯")).toBe("🤯");
     expect(normalizeMessageReaction("🚀")).toBeNull();
     expect(MESSAGE_REACTIONS).not.toContain("🖕");
+    expect(MESSAGE_REACTIONS).not.toContain("💩");
+    expect(MESSAGE_REACTIONS).not.toContain("🤡");
+    expect(MESSAGE_REACTIONS).not.toContain("😡");
   });
 
   it("does not start background work outside the ten-percent sample", () => {
