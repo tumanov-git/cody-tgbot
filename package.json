@@ -1,0 +1,50 @@
+{
+  "name": "cody-tgbot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Telegram-controlled Codex agent for a Linux server",
+  "license": "MIT",
+  "author": "Tema Tumanov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tumanov-git/cody-tgbot.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "telegram",
+    "codex",
+    "openai",
+    "bot",
+    "cli",
+    "bridge"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "knip": {
+    "ignoreDependencies": [
+      "@openai/codex"
+    ]
+  },
+  "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
+    "@openai/codex": "^0.146.1",
+    "better-sqlite3": "^13.0.3",
+    "cheerio": "^1.1.2",
+    "cron-parser": "^5.7.0",
+    "grammy": "^1.45.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
