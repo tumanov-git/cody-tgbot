@@ -1,7 +1,10 @@
 import type { Message } from "grammy/types";
 import { describe, expect, it } from "vitest";
 
-import { withTelegramMessageContext } from "../src/telegram-message-context.js";
+import {
+  extractTelegramRichMessageText,
+  withTelegramMessageContext,
+} from "../src/telegram-message-context.js";
 
 const baseMessage = {
   message_id: 10,
@@ -11,6 +14,23 @@ const baseMessage = {
 } as unknown as Message;
 
 describe("Telegram message context", () => {
+  it("extracts a standalone rich message for the input router", () => {
+    const text = extractTelegramRichMessageText({
+      blocks: [
+        { type: "paragraph", text: ["Собери ", { type: "bold", text: "сайт" }] },
+        {
+          type: "list",
+          items: [
+            { label: "• ", blocks: [{ type: "paragraph", text: "с каталогом" }] },
+            { label: "• ", blocks: [{ type: "paragraph", text: "и формой" }] },
+          ],
+        },
+      ],
+    });
+
+    expect(text).toBe("Собери сайт\n• \nс каталогом\n• \nи формой");
+  });
+
   it("does not spend tokens on an ordinary message", () => {
     const input = { text: "Обычный запрос", imagePaths: ["/tmp/image.png"] };
 

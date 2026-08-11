@@ -113,10 +113,10 @@ function extractMessageBody(source: Message | ExternalReplyInfo): string | undef
   }
 
   const richMessage = "rich_message" in source ? source.rich_message : undefined;
-  return extractRichMessageText(richMessage);
+  return extractTelegramRichMessageText(richMessage);
 }
 
-function extractRichMessageText(value: RichMessage | undefined): string | undefined {
+export function extractTelegramRichMessageText(value: RichMessage | undefined): string | undefined {
   if (!value) {
     return undefined;
   }

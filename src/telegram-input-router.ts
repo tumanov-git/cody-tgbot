@@ -24,7 +24,10 @@ import {
   safeReply,
   sendTextMessage,
 } from "./telegram-api.js";
-import { withTelegramMessageContext } from "./telegram-message-context.js";
+import {
+  extractTelegramRichMessageText,
+  withTelegramMessageContext,
+} from "./telegram-message-context.js";
 import { buildVoiceAgentPrompt, transcribeAudio } from "./voice.js";
 
 export function registerTelegramInputRoutes(
@@ -55,6 +58,24 @@ export function registerTelegramInputRoutes(
     if (!contextSession) return;
     const userText = ctx.message.text.trim();
     if (!userText || userText.startsWith("/")) return;
+    maybeReactToMessage(ctx, userText);
+    const { contextKey, session } = contextSession;
+    const promptInput = withTelegramMessageContext(userText, ctx.message);
+    await tasks.enqueue(ctx, contextKey, ctx.chat.id, session, promptInput, {
+      queueDisplayText: userText,
+    });
+  });
+
+  bot.on("message:rich_message", async (ctx) => {
+    const contextSession = await tasks.getContextSession(ctx);
+    if (!contextSession) return;
+    const userText = extractTelegramRichMessageText(ctx.message.rich_message)?.trim();
+    if (!userText) {
+      await safeReply(ctx, "Не смог прочитать содержимое сообщения. Попробуй отправить его обычным текстом.", {
+        fallbackText: "Не смог прочитать содержимое сообщения. Попробуй отправить его обычным текстом.",
+      });
+      return;
+    }
     maybeReactToMessage(ctx, userText);
     const { contextKey, session } = contextSession;
     const promptInput = withTelegramMessageContext(userText, ctx.message);
