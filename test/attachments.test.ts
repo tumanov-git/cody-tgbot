@@ -121,6 +121,7 @@ describe("buildOutputInstructions", () => {
 
     expect(result).toContain("Write any output files to: /workspace/.cody-tgbot/turns/t2/out");
     expect(result).toContain("Telegram bot will send files");
+    expect(result).toContain("text files as UTF-8");
   });
 });
 

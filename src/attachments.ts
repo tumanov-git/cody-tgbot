@@ -89,6 +89,7 @@ export function buildOutputInstructions(outDir: string): string {
     `Write any output files to: ${outDir}`,
     "The Telegram bot will send files from that directory after this turn completes.",
     "Only put files there when the user asks for a file or when a file is the best deliverable.",
+    "Write all text files as UTF-8; use the .md extension for Markdown documents.",
   ].join("\n");
 }
 

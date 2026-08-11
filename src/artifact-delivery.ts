@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { InputFile, type Context } from "grammy";
 
 import { collectArtifactReport, formatArtifactSummary } from "./artifacts.js";
@@ -26,7 +29,7 @@ export async function deliverArtifacts(
   const delivered = [];
   for (const artifact of artifacts) {
     try {
-      await api.sendDocument(chatId, new InputFile(artifact.localPath, artifact.name), {
+      await api.sendDocument(chatId, artifactInputFile(artifact.localPath, artifact.name), {
         ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
       });
       delivered.push(artifact);
@@ -81,7 +84,7 @@ export async function deliverAutomationArtifacts(
     try {
       const sent = await api.sendDocument(
         chatId,
-        new InputFile(artifact.localPath, artifact.name),
+        artifactInputFile(artifact.localPath, artifact.name),
         { ...(messageThreadId ? { message_thread_id: messageThreadId } : {}) },
       );
       store.finishArtifactDelivery(executionId, artifact.name, sent.message_id);
@@ -100,4 +103,15 @@ export async function deliverAutomationArtifacts(
     });
     store.markArtifactSummarySent(executionId, runnerId, sent.message_id);
   }
+}
+
+export function artifactInputFile(localPath: string, name: string): InputFile {
+  if (path.extname(name).toLowerCase() !== ".md") {
+    return new InputFile(localPath, name);
+  }
+  return new InputFile(async () => {
+    const contents = await readFile(localPath);
+    if (contents.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) return contents;
+    return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), contents]);
+  }, name);
 }
