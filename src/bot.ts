@@ -21,6 +21,12 @@ import { escapeHTML } from "./format.js";
 import type { ManagedBotService } from "./managed-bots.js";
 import type { ProjectWorkLock } from "./project-work-lock.js";
 import { ProjectStore, type ProjectRecord } from "./project-store.js";
+import {
+  buildPublicAccessKeyboard,
+  PUBLIC_ACCESS_CAPTION,
+  PUBLIC_ACCESS_FALLBACK,
+  PublicAccessCooldown,
+} from "./public-access.js";
 import { SessionRegistry } from "./session-registry.js";
 import { TaskController } from "./task-controller.js";
 import { registerTelegramInputRoutes } from "./telegram-input-router.js";
@@ -31,6 +37,7 @@ const MENU_CALLBACK_PREFIX = "menu:";
 const MENU_ASSET_DIRECTORY = path.resolve(process.cwd(), "assets/cody/menu");
 const DIALOGS_MENU_IMAGE = path.join(MENU_ASSET_DIRECTORY, "dialogs.png");
 const PROJECTS_MENU_IMAGE = path.join(MENU_ASSET_DIRECTORY, "projects.png");
+const PUBLIC_ACCESS_IMAGE = path.join(MENU_ASSET_DIRECTORY, "home-2.png");
 
 export type CodyBot = Bot<Context> & {
   codyTasks: TaskController;
@@ -51,14 +58,28 @@ export function createBot(
     client: { apiRoot: config.telegramApiRoot },
   }) as CodyBot;
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));
+  const publicAccessCooldown = new PublicAccessCooldown();
 
   bot.use(async (ctx, next) => {
     const fromId = ctx.from?.id;
     if (!fromId || !config.telegramAllowedUserIdSet.has(fromId)) {
       if (ctx.callbackQuery) {
-        await ctx.answerCallbackQuery({ text: "Нет доступа" }).catch(() => {});
-      } else if (ctx.chat) {
-        await safeReply(ctx, escapeHTML("Нет доступа"), { fallbackText: "Нет доступа" });
+        await ctx.answerCallbackQuery().catch(() => {});
+      }
+      const publicId = fromId ?? ctx.chat?.id;
+      if (ctx.chat && publicId && publicAccessCooldown.shouldSend(publicId)) {
+        try {
+          await ctx.replyWithPhoto(new InputFile(PUBLIC_ACCESS_IMAGE), {
+            caption: PUBLIC_ACCESS_CAPTION,
+            parse_mode: "HTML",
+            reply_markup: buildPublicAccessKeyboard(),
+          });
+        } catch {
+          await safeReply(ctx, PUBLIC_ACCESS_CAPTION, {
+            fallbackText: PUBLIC_ACCESS_FALLBACK,
+            replyMarkup: buildPublicAccessKeyboard(),
+          }).catch(() => {});
+        }
       }
       return;
     }
