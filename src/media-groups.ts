@@ -154,7 +154,7 @@ export class MediaGroupController {
         imagePaths: stagedPaths,
       };
       const latestUpdateId = Math.max(...group.items.map((item) => item.updateId));
-      await this.tasks.enqueueFromOrigin(
+      await this.tasks.enqueueUserInputFromOrigin(
         { updateId: latestUpdateId, privateChat: group.privateChat },
         group.contextKey,
         group.chatId,

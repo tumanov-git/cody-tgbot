@@ -20,6 +20,7 @@ import { cleanupRuntimeJob, retainRuntimeJobAttachments } from "./task-recovery.
 import { TaskRunner } from "./task-runner.js";
 import { TaskScheduler, type TaskReceipt } from "./task-scheduler.js";
 import { TelegramInteractionController } from "./telegram-interactions.js";
+import { LiveTurnMessage } from "./live-turn-message.js";
 import {
   formatError,
   sendTextMessage,
@@ -38,6 +39,7 @@ export type EnqueuePromptOptions = {
   queueDisplayText?: string;
   cleanupPaths?: string[];
   executionMode?: "default" | "plan" | "review";
+  liveMessageId?: number;
 };
 
 export { renderQueueMessage } from "./task-queue-ui.js";
@@ -50,10 +52,32 @@ type PendingQueuedPrompt = {
 
 type BusyState = { processing: boolean; transcribing: boolean };
 
+type BatchedUserInput = {
+  origin: { updateId: number; privateChat: boolean };
+  replyContext?: Context;
+  session: CodexSessionService;
+  userInput: CodexPromptInput;
+  options?: EnqueuePromptOptions;
+};
+
+type PendingUserInputBatch = {
+  contextKey: TelegramContextKey;
+  chatId: TelegramChatId;
+  openedAt: number;
+  items: BatchedUserInput[];
+  timer?: NodeJS.Timeout;
+  liveMessageId?: number;
+  statusPromise: Promise<void>;
+};
+
+const USER_INPUT_SETTLE_MS = 1_000;
+const USER_INPUT_MAX_WAIT_MS = 3_000;
+
 export class TaskController {
   private readonly contextBusy = new Map<TelegramContextKey, BusyState>();
   private readonly pendingQueuedPrompts = new Map<string, PendingQueuedPrompt>();
   private readonly activeJobs = new Map<TelegramContextKey, RuntimeJob>();
+  private readonly pendingUserInputBatches = new Map<TelegramContextKey, PendingUserInputBatch>();
   private readonly scheduler: TaskScheduler;
   private readonly runtimeJobs: RuntimeJobStore;
   private readonly runner: TaskRunner;
@@ -96,6 +120,10 @@ export class TaskController {
     this.shuttingDown = true;
     if (this.orphanCleanupTimer) clearInterval(this.orphanCleanupTimer);
     this.orphanCleanupTimer = undefined;
+    for (const batch of this.pendingUserInputBatches.values()) {
+      if (batch.timer) clearTimeout(batch.timer);
+    }
+    this.pendingUserInputBatches.clear();
   }
 
   async recover(): Promise<void> {
@@ -164,6 +192,7 @@ export class TaskController {
   hasAnyWork(): boolean {
     return this.scheduler.getActiveCount() > 0
       || this.pendingQueuedPrompts.size > 0
+      || this.pendingUserInputBatches.size > 0
       || [...this.contextBusy.values()].some((state) => state.processing || state.transcribing);
   }
 
@@ -206,6 +235,61 @@ export class TaskController {
     );
   }
 
+  async enqueueUserInput(
+    ctx: Context,
+    contextKey: TelegramContextKey,
+    chatId: TelegramChatId,
+    session: CodexSessionService,
+    userInput: CodexPromptInput,
+    options?: EnqueuePromptOptions,
+  ): Promise<void> {
+    this.enqueueUserInputFromOrigin(
+      {
+        updateId: ctx.update.update_id,
+        privateChat: ctx.chat?.type === "private",
+      },
+      contextKey,
+      chatId,
+      session,
+      userInput,
+      options,
+      ctx,
+    );
+  }
+
+  enqueueUserInputFromOrigin(
+    origin: { updateId: number; privateChat: boolean },
+    contextKey: TelegramContextKey,
+    chatId: TelegramChatId,
+    session: CodexSessionService,
+    userInput: CodexPromptInput,
+    options?: EnqueuePromptOptions,
+    replyContext?: Context,
+  ): void {
+    let batch = this.pendingUserInputBatches.get(contextKey);
+    if (!batch) {
+      const openedAt = Date.now();
+      batch = {
+        contextKey,
+        chatId,
+        openedAt,
+        items: [],
+        statusPromise: Promise.resolve(),
+      };
+      this.pendingUserInputBatches.set(contextKey, batch);
+      batch.statusPromise = this.startBatchStatus(batch, replyContext);
+    }
+
+    batch.items.push({
+      origin,
+      replyContext,
+      session,
+      userInput,
+      options,
+    });
+    this.scheduleUserInputBatch(batch);
+  }
+
   async enqueueFromOrigin(
     origin: { updateId: number; privateChat: boolean },
     contextKey: TelegramContextKey,
@@ -235,11 +319,17 @@ export class TaskController {
       resumeThreadId: options?.resumeThreadId ?? session.getInfo().threadId ?? undefined,
       cleanupPaths: options?.cleanupPaths,
       executionMode: options?.executionMode,
+      liveMessageId: options?.liveMessageId,
     };
     await this.runtimeJobs.put(job);
     const receipt = this.scheduleJob(job, session, false);
 
     if (!receipt.startedImmediately) {
+      if (job.liveMessageId) {
+        await this.bot.api.deleteMessage(job.chatId, job.liveMessageId).catch(() => {});
+        job.liveMessageId = undefined;
+        await this.runtimeJobs.patch(job.id, { liveMessageId: undefined });
+      }
       const pending: PendingQueuedPrompt = { job, session };
       this.pendingQueuedPrompts.set(receipt.id, pending);
       const messageId = await this.sendQueuedReply(
@@ -255,6 +345,70 @@ export class TaskController {
       }
     }
     return receipt;
+  }
+
+  private scheduleUserInputBatch(batch: PendingUserInputBatch): void {
+    if (batch.timer) clearTimeout(batch.timer);
+    const remaining = Math.max(0, USER_INPUT_MAX_WAIT_MS - (Date.now() - batch.openedAt));
+    const delay = Math.min(USER_INPUT_SETTLE_MS, remaining);
+    batch.timer = setTimeout(() => {
+      void this.flushUserInputBatch(batch.contextKey);
+    }, delay);
+  }
+
+  private async startBatchStatus(
+    batch: PendingUserInputBatch,
+    replyContext?: Context,
+  ): Promise<void> {
+    if (this.isBusy(batch.contextKey)) return;
+    const liveMessage = new LiveTurnMessage({
+      bot: this.bot,
+      chatId: batch.chatId,
+      contextKey: batch.contextKey,
+      messageThreadId: parseContextKey(batch.contextKey).messageThreadId,
+      initialStatus: "working",
+      startedAt: batch.openedAt,
+      onMessageReady: (messageId) => {
+        batch.liveMessageId = messageId;
+      },
+    });
+    try {
+      await liveMessage.start();
+    } catch (error) {
+      console.warn("Failed to send immediate batch status:", formatError(error));
+      await replyContext?.api.sendChatAction(batch.chatId, "typing").catch(() => {});
+    } finally {
+      liveMessage.dispose();
+    }
+  }
+
+  private async flushUserInputBatch(contextKey: TelegramContextKey): Promise<void> {
+    const batch = this.pendingUserInputBatches.get(contextKey);
+    if (!batch) return;
+    this.pendingUserInputBatches.delete(contextKey);
+    if (batch.timer) clearTimeout(batch.timer);
+
+    try {
+      await batch.statusPromise;
+      const merged = mergeBatchedUserInputs(batch.items);
+      await this.enqueueFromOrigin(
+        merged.origin,
+        batch.contextKey,
+        batch.chatId,
+        merged.session,
+        merged.userInput,
+        {
+          ...merged.options,
+          liveMessageId: batch.liveMessageId,
+        },
+        merged.replyContext,
+      );
+    } catch (error) {
+      if (batch.liveMessageId) {
+        await this.bot.api.deleteMessage(Number(batch.chatId), batch.liveMessageId).catch(() => {});
+      }
+      console.error(`Failed to flush Telegram input batch for ${contextKey}:`, formatError(error));
+    }
   }
 
   private scheduleJob(
@@ -385,4 +539,76 @@ export class TaskController {
     });
     return message.message_id;
   }
+}
+
+function mergeBatchedUserInputs(items: BatchedUserInput[]): {
+  origin: { updateId: number; privateChat: boolean };
+  replyContext?: Context;
+  session: CodexSessionService;
+  userInput: CodexPromptInput;
+  options: EnqueuePromptOptions;
+} {
+  const latest = items.at(-1)!;
+  const outputItem = items.find((item) => item.options?.outDir);
+  const selectedOutDir = outputItem?.options?.outDir;
+  const normalizedInputs = items.map((item) => {
+    if (
+      typeof item.userInput === "string"
+      || !selectedOutDir
+      || !item.options?.outDir
+      || item.options.outDir === selectedOutDir
+      || !item.userInput.stagedFileInstructions
+    ) {
+      return item.userInput;
+    }
+    return {
+      ...item.userInput,
+      stagedFileInstructions: item.userInput.stagedFileInstructions.replaceAll(
+        item.options.outDir,
+        selectedOutDir,
+      ),
+    };
+  });
+  const cleanupPaths = [...new Set(items.flatMap((item) => item.options?.cleanupPaths ?? []))];
+  const displayText = items
+    .map((item) => item.options?.queueDisplayText ?? promptTextForQueue(item.userInput))
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    origin: {
+      updateId: Math.max(...items.map((item) => item.origin.updateId)),
+      privateChat: latest.origin.privateChat,
+    },
+    replyContext: latest.replyContext,
+    session: items[0]!.session,
+    userInput: mergeCodexPromptInputs(normalizedInputs),
+    options: {
+      turnId: outputItem?.options?.turnId ?? items.find((item) => item.options?.turnId)?.options?.turnId,
+      outDir: selectedOutDir,
+      resumeThreadId: [...items].reverse().find((item) => item.options?.resumeThreadId)?.options?.resumeThreadId,
+      queueDisplayText: displayText,
+      cleanupPaths: cleanupPaths.length > 0 ? cleanupPaths : undefined,
+      executionMode: items.find((item) => item.options?.executionMode)?.options?.executionMode,
+    },
+  };
+}
+
+export function mergeCodexPromptInputs(inputs: CodexPromptInput[]): CodexPromptInput {
+  if (inputs.length === 1) return inputs[0]!;
+  const text = inputs
+    .map((input) => typeof input === "string" ? input : input.text)
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n\n");
+  const imagePaths = inputs.flatMap((input) => typeof input === "string" ? [] : input.imagePaths ?? []);
+  const stagedFileInstructions = inputs
+    .map((input) => typeof input === "string" ? undefined : input.stagedFileInstructions)
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join("\n\n");
+
+  return {
+    ...(text ? { text } : {}),
+    ...(imagePaths.length > 0 ? { imagePaths } : {}),
+    ...(stagedFileInstructions ? { stagedFileInstructions } : {}),
+  };
 }

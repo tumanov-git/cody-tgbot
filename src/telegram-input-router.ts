@@ -61,7 +61,7 @@ export function registerTelegramInputRoutes(
     maybeReactToMessage(ctx, userText);
     const { contextKey, session } = contextSession;
     const promptInput = withTelegramMessageContext(userText, ctx.message);
-    await tasks.enqueue(ctx, contextKey, ctx.chat.id, session, promptInput, {
+    await tasks.enqueueUserInput(ctx, contextKey, ctx.chat.id, session, promptInput, {
       queueDisplayText: userText,
     });
   });
@@ -79,7 +79,7 @@ export function registerTelegramInputRoutes(
     maybeReactToMessage(ctx, userText);
     const { contextKey, session } = contextSession;
     const promptInput = withTelegramMessageContext(userText, ctx.message);
-    await tasks.enqueue(ctx, contextKey, ctx.chat.id, session, promptInput, {
+    await tasks.enqueueUserInput(ctx, contextKey, ctx.chat.id, session, promptInput, {
       queueDisplayText: userText,
     });
   });
@@ -175,7 +175,7 @@ export function registerTelegramInputRoutes(
       const contextualTranscript = withTelegramMessageContext(transcript, ctx.message, {
         attachmentLabel: ctx.message.voice ? "голосовое сообщение" : "аудиофайл",
       });
-      await tasks.enqueue(
+      await tasks.enqueueUserInput(
         ctx,
         contextKey,
         chatId,
@@ -225,7 +225,7 @@ export function registerTelegramInputRoutes(
     const contextualPrompt = withTelegramMessageContext(promptInput, ctx.message, {
       attachmentLabel: "фотография",
     });
-    await tasks.enqueue(ctx, contextKey, chatId, session, contextualPrompt, {
+    await tasks.enqueueUserInput(ctx, contextKey, chatId, session, contextualPrompt, {
       queueDisplayText: caption || "Фотография",
       cleanupPaths: [tempFilePath],
     });
@@ -267,7 +267,7 @@ export function registerTelegramInputRoutes(
       ctx.message,
       { attachmentLabel: "статичный стикер" },
     );
-    await tasks.enqueue(ctx, contextKey, ctx.chat.id, session, prompt, {
+    await tasks.enqueueUserInput(ctx, contextKey, ctx.chat.id, session, prompt, {
       queueDisplayText: "Стикер",
       cleanupPaths: [temporary],
     });
@@ -345,7 +345,7 @@ export function registerTelegramInputRoutes(
     const contextualPrompt = withTelegramMessageContext(promptInput, ctx.message, {
       attachmentLabel: `документ «${stagedFile.safeName}»`,
     });
-    await tasks.enqueue(ctx, contextKey, chatId, session, contextualPrompt, {
+    await tasks.enqueueUserInput(ctx, contextKey, chatId, session, contextualPrompt, {
       turnId,
       outDir,
       queueDisplayText: caption || doc.file_name || "Документ",

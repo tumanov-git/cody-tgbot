@@ -78,8 +78,11 @@ export class TaskRunner {
       chatId,
       contextKey,
       messageThreadId,
-      existingMessageId: recovering ? job.liveMessageId : undefined,
-      startedAt: job.startedAt ? Date.parse(job.startedAt) : undefined,
+      existingMessageId: job.liveMessageId,
+      initialStatus: job.liveMessageId ? "working" : undefined,
+      startedAt: job.liveMessageId
+        ? Date.parse(job.createdAt)
+        : job.startedAt ? Date.parse(job.startedAt) : undefined,
       onMessageReady: async (messageId) => {
         job.liveMessageId = messageId;
         await this.options.runtimeJobs.patch(job.id, { liveMessageId: messageId });

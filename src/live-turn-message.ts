@@ -21,6 +21,7 @@ type LiveTurnMessageOptions = {
   contextKey: TelegramContextKey;
   messageThreadId?: number;
   existingMessageId?: number;
+  initialStatus?: WorkStatus;
   startedAt?: number;
   onMessageReady?: (messageId: number) => void | Promise<void>;
 };
@@ -41,12 +42,13 @@ export class LiveTurnMessage {
   private isFlushing = false;
   private flushPending = false;
   private finalized = false;
-  private status: WorkStatus = "accepted";
+  private status: WorkStatus;
   private subagentCount = 0;
 
   constructor(private readonly options: LiveTurnMessageOptions) {
     this.startedAt = options.startedAt ?? Date.now();
     this.messageId = options.existingMessageId;
+    this.status = options.initialStatus ?? "accepted";
     this.abortKeyboard = new InlineKeyboard().text(
       { text: "Остановить", style: "danger" },
       `codex_abort:${options.contextKey}`,
