@@ -1,15 +1,15 @@
 import { InlineKeyboard } from "grammy";
 
 export const PUBLIC_ACCESS_CAPTION = [
-  "<b>Это личная версия Коди для @tematumanov</b>",
+  "<b>Это версия Коди для @tematumanov</b>",
   "",
-  "Подробнее и публичная версия — на cody.build",
+  "Публичная версия — на cody.build",
 ].join("\n");
 
 export const PUBLIC_ACCESS_FALLBACK = [
-  "Это личная версия Коди для @tematumanov",
+  "Это версия Коди для @tematumanov",
   "",
-  "Подробнее и публичная версия — на cody.build",
+  "Публичная версия — на cody.build",
 ].join("\n");
 
 export function buildPublicAccessKeyboard(): InlineKeyboard {

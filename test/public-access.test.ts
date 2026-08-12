@@ -7,8 +7,9 @@ import {
 
 describe("public access screen", () => {
   it("points visitors to the public Cody product", () => {
-    expect(PUBLIC_ACCESS_CAPTION).toContain("личная версия Коди для @tematumanov");
-    expect(PUBLIC_ACCESS_FALLBACK).toContain("публичная версия — на cody.build");
+    expect(PUBLIC_ACCESS_CAPTION.split("\n")[0]).toBe("<b>Это версия Коди для @tematumanov</b>");
+    expect(PUBLIC_ACCESS_CAPTION).not.toContain("Подробнее");
+    expect(PUBLIC_ACCESS_FALLBACK).toContain("Публичная версия — на cody.build");
     expect(buildPublicAccessKeyboard().inline_keyboard[0]?.[0]).toMatchObject({
       text: "Открыть cody.build",
       url: "https://cody.build",
