@@ -22,6 +22,30 @@ export type WorklogEntry = {
   text: string;
 };
 
+export const COMMAND_COMPLETED_MESSAGES = [
+  "Команда выполнена",
+  "Покрутил шестерёнки",
+  "Пошуршал файлами",
+  "Подкрутил гайки",
+  "Сверился с реальностью",
+  "Разложил по полочкам",
+  "Навёл порядок",
+  "Состыковал детали",
+  "Провернул механизм",
+  "Подружил детали",
+  "Расставил всё по местам",
+  "Закрыл этот шаг",
+  "Подкрутил нужное",
+  "Подогнал детали",
+  "Соединил части",
+  "Проверил и закрепил",
+  "Добавил недостающую деталь",
+  "Закрыл очередной вопрос",
+  "Готово, иду дальше",
+  "Здесь порядок, продолжаю",
+  "Всё сошлось, продолжаю",
+] as const;
+
 export function renderWorkingStatus(options: {
   status: WorkStatus;
   entries: WorklogEntry[];
@@ -103,7 +127,17 @@ export function formatToolLifecycleText(
     agent: { running: "Подключаю дополнительного агента", completed: "Дополнительный агент закончил работу", failed: "Дополнительный агент завершился с ошибкой" },
     tool: { running: "Использую инструмент", completed: "Инструмент закончил работу", failed: "Инструмент завершился с ошибкой" },
   } as const;
+  if (category === "command" && status === "completed") {
+    return pickCommandCompletedMessage();
+  }
   return messages[category][status];
+}
+
+function pickCommandCompletedMessage(): string {
+  if (Math.random() < 0.5) return COMMAND_COMPLETED_MESSAGES[0];
+  const alternatives = COMMAND_COMPLETED_MESSAGES.slice(1);
+  return alternatives[Math.floor(Math.random() * alternatives.length)]
+    ?? COMMAND_COMPLETED_MESSAGES[0];
 }
 
 export function statusHasFinished(status: WorkStatus): boolean {

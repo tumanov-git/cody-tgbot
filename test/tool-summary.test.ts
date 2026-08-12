@@ -1,4 +1,5 @@
 import {
+  COMMAND_COMPLETED_MESSAGES,
   formatElapsedDuration,
   formatToolLifecycleText,
   renderWorkingStatus,
@@ -107,12 +108,28 @@ describe("work status formatting", () => {
 
   it("uses human tool lifecycle labels", () => {
     expect(formatToolLifecycleText("git status", "running")).toBe("Выполняю команду");
-    expect(formatToolLifecycleText("git status", "completed")).toBe("Команда выполнена");
+    const completed = Array.from(
+      { length: COMMAND_COMPLETED_MESSAGES.length * 2 },
+      () => formatToolLifecycleText("git status", "completed"),
+    );
+    expect(completed.every((message) => COMMAND_COMPLETED_MESSAGES.includes(
+      message as typeof COMMAND_COMPLETED_MESSAGES[number],
+    ))).toBe(true);
+    expect(COMMAND_COMPLETED_MESSAGES[0]).toBe("Команда выполнена");
     expect(formatToolLifecycleText("search:latest Codex release", "running")).toBe("Ищу информацию");
     expect(formatToolLifecycleText("file_change", "completed")).toBe("Работа с файлами завершена");
     expect(formatToolLifecycleText("mcp:server/unknown_tool", "completed")).toBe(
       "Инструмент закончил работу",
     );
+  });
+
+  it("keeps the standard command completion message at fifty percent", () => {
+    const random = vi.spyOn(Math, "random");
+    random.mockReturnValueOnce(0.49);
+    expect(formatToolLifecycleText("git status", "completed")).toBe("Команда выполнена");
+    random.mockReturnValueOnce(0.5).mockReturnValueOnce(0);
+    expect(formatToolLifecycleText("git status", "completed")).toBe("Покрутил шестерёнки");
+    random.mockRestore();
   });
 
   it("formats elapsed work time without empty units", () => {
