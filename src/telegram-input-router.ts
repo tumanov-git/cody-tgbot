@@ -24,10 +24,12 @@ import {
   safeReply,
   sendTextMessage,
 } from "./telegram-api.js";
+import { withTelegramMessageContext } from "./telegram-message-context.js";
 import {
-  extractTelegramRichMessageText,
-  withTelegramMessageContext,
-} from "./telegram-message-context.js";
+  extractTelegramMessageContent,
+  renderTelegramRichContent,
+  stageTelegramCustomEmoji,
+} from "./telegram-rich-content.js";
 import { buildVoiceAgentPrompt, transcribeAudio } from "./voice.js";
 
 export function registerTelegramInputRoutes(
@@ -56,12 +58,28 @@ export function registerTelegramInputRoutes(
   bot.on("message:text", async (ctx) => {
     const contextSession = await tasks.getContextSession(ctx);
     if (!contextSession) return;
-    const userText = ctx.message.text.trim();
+    const content = extractTelegramMessageContent(ctx.message);
+    const userText = content.plainText.trim();
     if (!userText || userText.startsWith("/")) return;
     maybeReactToMessage(ctx, userText);
     const { contextKey, session } = contextSession;
-    const promptInput = withTelegramMessageContext(userText, ctx.message);
+    const turnId = randomUUID().slice(0, 12);
+    const workspace = session.getCurrentWorkspace();
+    const stagedEmoji = await stageTelegramCustomEmoji(ctx.api, config.telegramBotToken, content, {
+      workspace,
+      turnId,
+      maxFileSize: config.maxFileSize,
+      apiRoot: config.telegramApiRoot,
+    });
+    const richText = renderTelegramRichContent(content, stagedEmoji);
+    const input: CodexPromptInput = stagedEmoji.length > 0
+      ? { text: richText, imagePaths: stagedEmoji.map((emoji) => emoji.localPath) }
+      : richText;
+    const promptInput = withTelegramMessageContext(input, ctx.message);
     await tasks.enqueueUserInput(ctx, contextKey, ctx.chat.id, session, promptInput, {
+      ...(stagedEmoji.length > 0
+        ? { turnId, cleanupPaths: [inboxPath(workspace, turnId)] }
+        : {}),
       queueDisplayText: userText,
     });
   });
@@ -69,7 +87,8 @@ export function registerTelegramInputRoutes(
   bot.on("message:rich_message", async (ctx) => {
     const contextSession = await tasks.getContextSession(ctx);
     if (!contextSession) return;
-    const userText = extractTelegramRichMessageText(ctx.message.rich_message)?.trim();
+    const content = extractTelegramMessageContent(ctx.message);
+    const userText = content.plainText.trim();
     if (!userText) {
       await safeReply(ctx, "Не смог прочитать содержимое сообщения. Попробуй отправить его обычным текстом.", {
         fallbackText: "Не смог прочитать содержимое сообщения. Попробуй отправить его обычным текстом.",
@@ -78,8 +97,23 @@ export function registerTelegramInputRoutes(
     }
     maybeReactToMessage(ctx, userText);
     const { contextKey, session } = contextSession;
-    const promptInput = withTelegramMessageContext(userText, ctx.message);
+    const turnId = randomUUID().slice(0, 12);
+    const workspace = session.getCurrentWorkspace();
+    const stagedEmoji = await stageTelegramCustomEmoji(ctx.api, config.telegramBotToken, content, {
+      workspace,
+      turnId,
+      maxFileSize: config.maxFileSize,
+      apiRoot: config.telegramApiRoot,
+    });
+    const richText = renderTelegramRichContent(content, stagedEmoji);
+    const input: CodexPromptInput = stagedEmoji.length > 0
+      ? { text: richText, imagePaths: stagedEmoji.map((emoji) => emoji.localPath) }
+      : richText;
+    const promptInput = withTelegramMessageContext(input, ctx.message);
     await tasks.enqueueUserInput(ctx, contextKey, ctx.chat.id, session, promptInput, {
+      ...(stagedEmoji.length > 0
+        ? { turnId, cleanupPaths: [inboxPath(workspace, turnId)] }
+        : {}),
       queueDisplayText: userText,
     });
   });
@@ -219,15 +253,31 @@ export function registerTelegramInputRoutes(
     } finally {
       busyState.transcribing = false;
     }
-    const promptInput: { text?: string; imagePaths: string[] } = { imagePaths: [tempFilePath] };
-    const caption = ctx.message.caption?.trim();
-    if (caption) promptInput.text = caption;
+    const turnId = randomUUID().slice(0, 12);
+    const workspace = session.getCurrentWorkspace();
+    const content = extractTelegramMessageContent(ctx.message);
+    const caption = content.plainText.trim();
+    const stagedEmoji = await stageTelegramCustomEmoji(ctx.api, config.telegramBotToken, content, {
+      workspace,
+      turnId,
+      maxFileSize: config.maxFileSize,
+      apiRoot: config.telegramApiRoot,
+    });
+    const promptInput: { text?: string; imagePaths: string[] } = {
+      imagePaths: [tempFilePath, ...stagedEmoji.map((emoji) => emoji.localPath)],
+    };
+    const richCaption = renderTelegramRichContent(content, stagedEmoji);
+    if (richCaption) promptInput.text = richCaption;
     const contextualPrompt = withTelegramMessageContext(promptInput, ctx.message, {
       attachmentLabel: "фотография",
     });
     await tasks.enqueueUserInput(ctx, contextKey, chatId, session, contextualPrompt, {
+      ...(stagedEmoji.length > 0 ? { turnId } : {}),
       queueDisplayText: caption || "Фотография",
-      cleanupPaths: [tempFilePath],
+      cleanupPaths: [
+        tempFilePath,
+        ...(stagedEmoji.length > 0 ? [inboxPath(workspace, turnId)] : []),
+      ],
     });
   });
 
@@ -340,8 +390,17 @@ export function registerTelegramInputRoutes(
     const promptInput: CodexPromptInput = {
       stagedFileInstructions: buildFileInstructions([stagedFile], outDir),
     };
-    const caption = ctx.message.caption?.trim();
-    if (caption) promptInput.text = caption;
+    const content = extractTelegramMessageContent(ctx.message);
+    const caption = content.plainText.trim();
+    const stagedEmoji = await stageTelegramCustomEmoji(ctx.api, config.telegramBotToken, content, {
+      workspace,
+      turnId,
+      maxFileSize: config.maxFileSize,
+      apiRoot: config.telegramApiRoot,
+    });
+    const richCaption = renderTelegramRichContent(content, stagedEmoji);
+    if (richCaption) promptInput.text = richCaption;
+    if (stagedEmoji.length > 0) promptInput.imagePaths = stagedEmoji.map((emoji) => emoji.localPath);
     const contextualPrompt = withTelegramMessageContext(promptInput, ctx.message, {
       attachmentLabel: `документ «${stagedFile.safeName}»`,
     });
@@ -349,7 +408,7 @@ export function registerTelegramInputRoutes(
       turnId,
       outDir,
       queueDisplayText: caption || doc.file_name || "Документ",
-      cleanupPaths: [inboxPath(config.workspace, turnId)],
+      cleanupPaths: [inboxPath(workspace, turnId)],
     });
   });
 

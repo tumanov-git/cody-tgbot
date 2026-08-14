@@ -11,6 +11,12 @@ import { PREMIUM_EMOJI, renderPremiumEmoji } from "./format.js";
 import type { TaskController } from "./task-controller.js";
 import { downloadTelegramFile, sendTextMessage } from "./telegram-api.js";
 import { withTelegramMessageContext } from "./telegram-message-context.js";
+import {
+  extractTelegramMessageContent,
+  renderTelegramRichContent,
+  stageTelegramCustomEmoji,
+  type TelegramRichContent,
+} from "./telegram-rich-content.js";
 
 const MEDIA_GROUP_SETTLE_MS = 700;
 const MEDIA_GROUP_RECOVERY_SETTLE_MS = 2_000;
@@ -21,6 +27,7 @@ interface MediaGroupItem {
   fileId: string;
   caption?: string;
   contextualText?: string;
+  richContent?: TelegramRichContent;
 }
 
 interface PendingMediaGroup {
@@ -55,10 +62,12 @@ export class MediaGroupController {
   }
 
   async accept(ctx: Context, contextKey: TelegramContextKey, mediaGroupId: string, fileId: string): Promise<void> {
-    const caption = ctx.message?.caption?.trim();
+    const richContent = ctx.message ? extractTelegramMessageContent(ctx.message) : undefined;
+    const caption = richContent?.plainText.trim();
+    const renderedCaption = richContent ? renderTelegramRichContent(richContent) : caption;
     const contextual = ctx.message
-      ? withTelegramMessageContext(caption ?? "", ctx.message, { attachmentLabel: "фотоальбом" })
-      : caption;
+      ? withTelegramMessageContext(renderedCaption ?? "", ctx.message, { attachmentLabel: "фотоальбом" })
+      : renderedCaption;
     const key = `${contextKey}:${mediaGroupId}`;
     await this.withMutationLock(async () => {
       await this.ensureLoaded();
@@ -80,6 +89,9 @@ export class MediaGroupController {
         updateId: ctx.update.update_id,
         fileId,
         ...(caption ? { caption } : {}),
+        ...(richContent && (richContent.customEmojis.length > 0 || richContent.links.length > 0)
+          ? { richContent }
+          : {}),
         ...(typeof contextual === "string" && contextual.trim()
           ? { contextualText: contextual.trim() }
           : {}),
@@ -141,16 +153,34 @@ export class MediaGroupController {
           temporary,
           `photo-${index + 1}${extension}`,
           "image/jpeg",
-          { workspace: this.config.workspace, turnId, maxFileSize: this.config.maxFileSize },
+          { workspace, turnId, maxFileSize: this.config.maxFileSize },
         );
         stagedPaths.push(staged.localPath);
       }
 
       const captionItem = group.items.find((item) => item.contextualText || item.caption);
+      let promptText = captionItem?.contextualText || captionItem?.caption;
+      if (captionItem?.richContent) {
+        const stagedEmoji = await stageTelegramCustomEmoji(
+          this.bot.api,
+          this.config.telegramBotToken,
+          captionItem.richContent,
+          {
+            workspace,
+            turnId,
+            maxFileSize: this.config.maxFileSize,
+            apiRoot: this.config.telegramApiRoot,
+          },
+        );
+        stagedPaths.push(...stagedEmoji.map((emoji) => emoji.localPath));
+        const original = renderTelegramRichContent(captionItem.richContent);
+        const enriched = renderTelegramRichContent(captionItem.richContent, stagedEmoji);
+        promptText = promptText?.includes(original)
+          ? promptText.replace(original, enriched)
+          : enriched;
+      }
       const prompt = {
-        ...(captionItem?.contextualText || captionItem?.caption
-          ? { text: captionItem.contextualText ?? captionItem.caption }
-          : {}),
+        ...(promptText ? { text: promptText } : {}),
         imagePaths: stagedPaths,
       };
       const latestUpdateId = Math.max(...group.items.map((item) => item.updateId));
@@ -164,7 +194,7 @@ export class MediaGroupController {
           turnId,
           outDir: outboxPath(workspace, turnId),
           queueDisplayText: captionItem?.caption || `Фотоальбом · ${group.items.length} фото`,
-          cleanupPaths: [inboxPath(this.config.workspace, turnId)],
+          cleanupPaths: [inboxPath(workspace, turnId)],
         },
       );
       await this.remove(key);
@@ -179,7 +209,7 @@ export class MediaGroupController {
         },
       ).catch(() => {});
       await this.remove(key);
-      await rm(inboxPath(this.config.workspace, turnId), { recursive: true, force: true }).catch(() => {});
+      await rm(inboxPath(workspace, turnId), { recursive: true, force: true }).catch(() => {});
       console.error(`Media group ${key} failed:`, error);
     } finally {
       await Promise.all(temporaryPaths.map((temporary) => unlink(temporary).catch(() => {})));

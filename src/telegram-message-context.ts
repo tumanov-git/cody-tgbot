@@ -3,12 +3,16 @@ import type {
   ExternalReplyInfo,
   Message,
   MessageOrigin,
-  RichBlock,
   RichMessage,
   User,
 } from "grammy/types";
 
 import type { CodexPromptInput } from "./codex-session.js";
+import {
+  extractTelegramMessageContent,
+  extractTelegramRichContent,
+  renderTelegramRichContent,
+} from "./telegram-rich-content.js";
 
 const MAX_REFERENCED_TEXT_LENGTH = 3000;
 
@@ -106,61 +110,26 @@ function appendReferencedContent(
 }
 
 function extractMessageBody(source: Message | ExternalReplyInfo): string | undefined {
-  const sourceRecord = source as unknown as Record<string, unknown>;
-  const ordinaryText = stringValue(sourceRecord.text) || stringValue(sourceRecord.caption);
-  if (ordinaryText) {
-    return ordinaryText;
+  if ("date" in source && "message_id" in source) {
+    const rendered = renderTelegramRichContent(extractTelegramMessageContent(source)).trim();
+    return rendered || undefined;
   }
-
-  const richMessage = "rich_message" in source ? source.rich_message : undefined;
+  const sourceRecord = source as unknown as Record<string, unknown>;
+  const ordinary = stringValue(sourceRecord.text) || stringValue(sourceRecord.caption);
+  if (ordinary) return ordinary;
+  const richMessage = "rich_message" in source
+    ? source.rich_message as RichMessage | undefined
+    : undefined;
   return extractTelegramRichMessageText(richMessage);
 }
 
 export function extractTelegramRichMessageText(value: RichMessage | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const text = extractRichBlocks(value.blocks).trim();
+  const text = renderTelegramRichContent(extractTelegramRichContent(value)).trim();
   return text || undefined;
-}
-
-function extractRichBlocks(value: RichBlock[]): string {
-  return value
-    .map((block) => extractRichNode(block, "block"))
-    .filter(Boolean)
-    .join("\n");
-}
-
-function extractRichNode(value: unknown, mode: "inline" | "block"): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => extractRichNode(item, mode))
-      .filter(Boolean)
-      .join(mode === "inline" ? "" : "\n");
-  }
-  if (!isRecord(value)) {
-    return "";
-  }
-
-  const inlineParts = ["label", "summary", "text", "caption", "credit", "expression"]
-    .map((key) => extractRichNode(value[key], "inline"))
-    .filter(Boolean);
-  const blockParts = ["blocks", "items", "rows", "cells"]
-    .map((key) => extractRichNode(value[key], "block"))
-    .filter(Boolean);
-  return [...inlineParts, ...blockParts].join(mode === "inline" ? "" : "\n");
 }
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildForwardedMessage(
