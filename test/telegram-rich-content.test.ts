@@ -51,6 +51,31 @@ describe("Telegram rich content", () => {
     expect(content.plainText).toBe("Очень 🔥 подробности");
     expect(content.customEmojis).toEqual([{ id: "emoji-2", alternativeText: "🔥" }]);
     expect(content.links).toEqual([{ text: "подробности", url: "https://example.com" }]);
+    expect(content.richMessage).toBe(richMessage);
+    const rendered = renderTelegramRichContent(content);
+    expect(rendered).toContain('"type": "custom_emoji"');
+    expect(rendered).toContain('"custom_emoji_id": "emoji-2"');
+    expect(rendered).toContain('"url": "https://example.com"');
+  });
+
+  it("prefers the exact rich message JSON over a flattened text fallback", () => {
+    const richMessage = {
+      blocks: [{
+        type: "table",
+        rows: [
+          { cells: [{ text: "A" }, { text: "B" }] },
+          { cells: [{ text: "1" }, { text: "2" }] },
+        ],
+      }],
+    } as unknown as RichMessage;
+    const content = extractTelegramMessageContent({
+      text: "A B\n1 2",
+      rich_message: richMessage,
+    } as unknown as Message);
+
+    expect(content.richMessage).toBe(richMessage);
+    expect(renderTelegramRichContent(content)).toContain('"type": "table"');
+    expect(renderTelegramRichContent(content)).toContain('"cells"');
   });
 
   it("passes a reusable custom emoji id without downloading an image", () => {

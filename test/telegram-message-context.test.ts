@@ -28,7 +28,10 @@ describe("Telegram message context", () => {
       ],
     });
 
-    expect(text).toBe("Собери сайт\n• \nс каталогом\n• \nи формой");
+    expect(text).toContain("[Исходное сообщение пользователя в формате Telegram RichMessage]");
+    expect(text).toContain('"type": "bold"');
+    expect(text).toContain('"type": "list"');
+    expect(text).toContain('"text": "с каталогом"');
   });
 
   it("does not spend tokens on an ordinary message", () => {
@@ -158,8 +161,9 @@ describe("Telegram message context", () => {
 
     const result = withTelegramMessageContext(message.text!, message);
 
-    expect(result).toContain("Половина теста успешна.");
-    expect(result).toContain("• \nreply распознан");
+    expect(result).toContain("[Исходное сообщение пользователя в формате Telegram RichMessage]");
+    expect(result).toContain('"type": "bold"');
+    expect(result).toContain('"text": "reply распознан"');
     expect(result).not.toContain("Содержимое исходного сообщения недоступно");
   });
 

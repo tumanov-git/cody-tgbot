@@ -14,9 +14,13 @@ export interface TelegramRichContent {
   plainText: string;
   customEmojis: TelegramCustomEmoji[];
   links: TelegramTextLink[];
+  richMessage?: RichMessage;
 }
 
 export function extractTelegramMessageContent(message: Message): TelegramRichContent {
+  if (message.rich_message !== undefined) {
+    return extractTelegramRichContent(message.rich_message);
+  }
   if (message.text !== undefined) {
     return extractEntityContent(message.text, message.entities);
   }
@@ -29,6 +33,7 @@ export function extractTelegramMessageContent(message: Message): TelegramRichCon
 export function extractTelegramRichContent(value: RichMessage | undefined): TelegramRichContent {
   if (!value) return emptyContent();
   const state = emptyContent();
+  state.richMessage = value;
   state.plainText = extractRichBlocks(value.blocks, state).trim();
   state.customEmojis = uniqueCustomEmojis(state.customEmojis);
   state.links = uniqueLinks(state.links);
@@ -38,6 +43,12 @@ export function extractTelegramRichContent(value: RichMessage | undefined): Tele
 export function renderTelegramRichContent(
   content: TelegramRichContent,
 ): string {
+  if (content.richMessage) {
+    return [
+      "[Исходное сообщение пользователя в формате Telegram RichMessage]",
+      JSON.stringify(content.richMessage, null, 2),
+    ].join("\n");
+  }
   const text = content.plainText.trim();
   if (content.customEmojis.length === 0 && content.links.length === 0) return text;
   const lines = [text, "", "[Оформление исходного сообщения в Telegram]"];
