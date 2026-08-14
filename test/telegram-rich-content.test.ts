@@ -1,15 +1,9 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
-import type { Context } from "grammy";
-import type { Message, RichMessage, Sticker } from "grammy/types";
+import type { Message, RichMessage } from "grammy/types";
 
 import {
   extractTelegramMessageContent,
   extractTelegramRichContent,
   renderTelegramRichContent,
-  stageTelegramCustomEmoji,
 } from "../src/telegram-rich-content.js";
 
 describe("Telegram rich content", () => {
@@ -34,6 +28,9 @@ describe("Telegram rich content", () => {
       links: [{ text: "сайт", url: "https://cody.build" }],
     });
     expect(renderTelegramRichContent(content)).toContain("«сайт» → https://cody.build");
+    expect(renderTelegramRichContent(content)).toContain(
+      "«🙂» → tg://emoji?id=emoji-1 (custom_emoji_id: emoji-1)",
+    );
   });
 
   it("reads custom emoji and links from Telegram rich messages", () => {
@@ -56,51 +53,13 @@ describe("Telegram rich content", () => {
     expect(content.links).toEqual([{ text: "подробности", url: "https://example.com" }]);
   });
 
-  it("downloads a custom emoji preview and stages it as model-visible input", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "cody-premium-emoji-"));
-    const source = path.join(root, "source.webp");
-    const workspace = path.join(root, "workspace");
-    await mkdir(workspace);
-    await writeFile(source, "fake webp");
-    const api = {
-      getCustomEmojiStickers: vi.fn(async () => [{
-        file_id: "emoji-file",
-        file_unique_id: "emoji-unique",
-        type: "custom_emoji",
-        width: 100,
-        height: 100,
-        is_animated: false,
-        is_video: false,
-        custom_emoji_id: "emoji-1",
-      } as Sticker]),
-      getFile: vi.fn(async () => ({ file_id: "emoji-file", file_unique_id: "emoji-unique", file_path: source })),
-    } as unknown as Context["api"];
-
-    try {
-      const staged = await stageTelegramCustomEmoji(
-        api,
-        "not-used-for-local-files",
-        {
-          plainText: "🙂",
-          customEmojis: [{ id: "emoji-1", alternativeText: "🙂" }],
-          links: [],
-        },
-        { workspace, turnId: "turn-1", maxFileSize: 1024 },
-      );
-
-      expect(staged).toHaveLength(1);
-      expect(staged[0]?.localPath).toBe(
-        path.join(workspace, ".cody-tgbot", "inbox", "turn-1", "premium-emoji-1.webp"),
-      );
-      expect(await readFile(staged[0]!.localPath, "utf8")).toBe("fake webp");
-      expect(renderTelegramRichContent({
-        plainText: "🙂",
-        customEmojis: [{ id: "emoji-1", alternativeText: "🙂" }],
-        links: [],
-      }, staged)).toContain(staged[0]!.localPath);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("passes a reusable custom emoji id without downloading an image", () => {
+    expect(renderTelegramRichContent({
+      plainText: "🙂",
+      customEmojis: [{ id: "5368324170671202286", alternativeText: "🙂" }],
+      links: [],
+    })).toContain(
+      "tg://emoji?id=5368324170671202286 (custom_emoji_id: 5368324170671202286)",
+    );
   });
 });
-

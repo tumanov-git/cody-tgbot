@@ -1,13 +1,4 @@
-import { unlink } from "node:fs/promises";
-import path from "node:path";
-
-import type { Context } from "grammy";
-import type { Message, MessageEntity, RichMessage, Sticker } from "grammy/types";
-
-import { stageFile } from "./attachments.js";
-import { downloadTelegramFile } from "./telegram-api.js";
-
-const MAX_CUSTOM_EMOJI_VISUALS = 20;
+import type { Message, MessageEntity, RichMessage } from "grammy/types";
 
 export interface TelegramCustomEmoji {
   id: string;
@@ -23,12 +14,6 @@ export interface TelegramRichContent {
   plainText: string;
   customEmojis: TelegramCustomEmoji[];
   links: TelegramTextLink[];
-}
-
-export interface StagedCustomEmoji {
-  id: string;
-  alternativeText: string;
-  localPath: string;
 }
 
 export function extractTelegramMessageContent(message: Message): TelegramRichContent {
@@ -52,19 +37,15 @@ export function extractTelegramRichContent(value: RichMessage | undefined): Tele
 
 export function renderTelegramRichContent(
   content: TelegramRichContent,
-  staged: StagedCustomEmoji[] = [],
 ): string {
   const text = content.plainText.trim();
   if (content.customEmojis.length === 0 && content.links.length === 0) return text;
-  const stagedById = new Map(staged.map((emoji) => [emoji.id, emoji]));
   const lines = [text, "", "[Оформление исходного сообщения в Telegram]"];
   if (content.customEmojis.length > 0) {
     lines.push("Premium emoji:");
     for (const emoji of content.customEmojis) {
-      const visual = stagedById.get(emoji.id);
-      lines.push(
-        `- «${emoji.alternativeText || "эмодзи"}»${visual ? ` — изображение приложено: ${visual.localPath}` : ""}`,
-      );
+      const alternativeText = emoji.alternativeText || "эмодзи";
+      lines.push(`- «${alternativeText}» → tg://emoji?id=${emoji.id} (custom_emoji_id: ${emoji.id})`);
     }
   }
   if (content.links.length > 0) {
@@ -72,62 +53,6 @@ export function renderTelegramRichContent(
     for (const link of content.links) lines.push(`- «${link.text}» → ${link.url}`);
   }
   return lines.filter((line, index) => line || index !== 0).join("\n");
-}
-
-export async function stageTelegramCustomEmoji(
-  api: Context["api"],
-  token: string,
-  content: TelegramRichContent,
-  options: {
-    workspace: string;
-    turnId: string;
-    maxFileSize: number;
-    apiRoot?: string;
-  },
-): Promise<StagedCustomEmoji[]> {
-  const requested = uniqueCustomEmojis(content.customEmojis).slice(0, MAX_CUSTOM_EMOJI_VISUALS);
-  if (requested.length === 0) return [];
-
-  let stickers: Sticker[];
-  try {
-    stickers = await api.getCustomEmojiStickers(requested.map((emoji) => emoji.id));
-  } catch (error) {
-    console.warn("Failed to resolve Telegram custom emoji:", errorMessage(error));
-    return [];
-  }
-  const stickersById = new Map(
-    stickers
-      .filter((sticker) => sticker.custom_emoji_id)
-      .map((sticker) => [sticker.custom_emoji_id!, sticker]),
-  );
-  const staged: StagedCustomEmoji[] = [];
-  for (const [index, emoji] of requested.entries()) {
-    const sticker = stickersById.get(emoji.id) ?? stickers[index];
-    if (!sticker) continue;
-    const fileId = sticker.thumbnail?.file_id
-      ?? (!sticker.is_animated && !sticker.is_video ? sticker.file_id : undefined);
-    if (!fileId) continue;
-    let temporary: string | undefined;
-    try {
-      temporary = await downloadTelegramFile(api, token, fileId, {
-        apiRoot: options.apiRoot,
-        maxBytes: options.maxFileSize,
-      });
-      const extension = imageExtension(temporary);
-      const file = await stageFile(
-        temporary,
-        `premium-emoji-${index + 1}${extension}`,
-        mimeTypeForExtension(extension),
-        options,
-      );
-      staged.push({ ...emoji, localPath: file.localPath });
-    } catch (error) {
-      console.warn(`Failed to stage Telegram custom emoji ${emoji.id}:`, errorMessage(error));
-    } finally {
-      if (temporary) await unlink(temporary).catch(() => {});
-    }
-  }
-  return staged;
 }
 
 function extractEntityContent(text: string, entities: MessageEntity[] | undefined): TelegramRichContent {
@@ -223,19 +148,4 @@ function stringValue(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function imageExtension(filePath: string): string {
-  const extension = path.extname(filePath).toLowerCase();
-  return [".jpg", ".jpeg", ".png", ".webp"].includes(extension) ? extension : ".webp";
-}
-
-function mimeTypeForExtension(extension: string): string {
-  if (extension === ".png") return "image/png";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
-  return "image/webp";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

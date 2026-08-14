@@ -14,7 +14,6 @@ import { withTelegramMessageContext } from "./telegram-message-context.js";
 import {
   extractTelegramMessageContent,
   renderTelegramRichContent,
-  stageTelegramCustomEmoji,
   type TelegramRichContent,
 } from "./telegram-rich-content.js";
 
@@ -161,23 +160,10 @@ export class MediaGroupController {
       const captionItem = group.items.find((item) => item.contextualText || item.caption);
       let promptText = captionItem?.contextualText || captionItem?.caption;
       if (captionItem?.richContent) {
-        const stagedEmoji = await stageTelegramCustomEmoji(
-          this.bot.api,
-          this.config.telegramBotToken,
-          captionItem.richContent,
-          {
-            workspace,
-            turnId,
-            maxFileSize: this.config.maxFileSize,
-            apiRoot: this.config.telegramApiRoot,
-          },
-        );
-        stagedPaths.push(...stagedEmoji.map((emoji) => emoji.localPath));
         const original = renderTelegramRichContent(captionItem.richContent);
-        const enriched = renderTelegramRichContent(captionItem.richContent, stagedEmoji);
         promptText = promptText?.includes(original)
-          ? promptText.replace(original, enriched)
-          : enriched;
+          ? promptText
+          : original;
       }
       const prompt = {
         ...(promptText ? { text: promptText } : {}),
